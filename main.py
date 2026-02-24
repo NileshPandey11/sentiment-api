@@ -1,6 +1,7 @@
 import os
 import json
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
 from dotenv import load_dotenv
@@ -8,6 +9,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI()
+
+# This tells the bouncer to let everyone in
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 class CommentRequest(BaseModel):
@@ -19,13 +29,11 @@ class SentimentResponse(BaseModel):
 
 @app.post("/comment", response_model=SentimentResponse)
 async def analyze_comment(request: CommentRequest):
-
     if not request.comment.strip():
         raise HTTPException(status_code=400, detail="Comment cannot be empty")
-
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",  # free model on Groq
+            model="llama-3.1-8b-instant",
             messages=[
                 {
                     "role": "system",
@@ -43,20 +51,19 @@ async def analyze_comment(request: CommentRequest):
                     "content": request.comment
                 }
             ],
-            temperature=0,  # makes responses consistent, less random
-            response_format={"type": "json_object"},  # Groq supports this!
+            temperature=0,
+            response_format={"type": "json_object"},
         )
-
         raw = completion.choices[0].message.content
-        data = json.loads(raw)  # parse the JSON string into a Python dict
-
-        # Validate the values
+        data = json.loads(raw)
         if data["sentiment"] not in ["positive", "negative", "neutral"]:
             raise ValueError("Invalid sentiment value")
         if not (1 <= int(data["rating"]) <= 5):
             raise ValueError("Rating out of range")
-
         return SentimentResponse(sentiment=data["sentiment"], rating=int(data["rating"]))
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"API error: {str(e)}")
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
